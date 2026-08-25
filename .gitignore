@@ -1,0 +1,24 @@
+.claude/
+CLAUDE.md
+__pycache__/
+*.pyc
+.DS_Store
+output/*.png
+output/*.txt
+output/*.wav
+
+# 测量数据（含个人信息，不入库）
+原始数据/
+挂载eq后测出来的数据/
+挂载eq后测出来数据/
+archive/
+_归档_20260823/
+近场数据/
+rms/
+原始数据_旧备份/
+原始数据_线性废弃/
+# car_eq.py 输出网格的参照文件（本地保留即可）
+graphic_eq_grid_ref.txt
+# 车载测量目录（每车型一个；条目已打码避免公开仓库泄露，本地目录名不变）
+别*/
+宝*/
