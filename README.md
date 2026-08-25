@@ -1,9 +1,9 @@
 # Speaker Auto DSP
 
 [![License: MIT](https://img.shields.io/github/license/BryleXia/speaker-auto-dsp)](LICENSE)
-[![Python 3](https://img.shields.io/badge/Python-3-3776AB?logo=python&logoColor=white)]
-[![DSP: minimum phase](https://img.shields.io/badge/DSP-minimum--phase-5C6B7A)]
-[![Room target](https://img.shields.io/badge/room%20target-adapted%20Harman--nearfield-C37D4B)]
+![Python 3](https://img.shields.io/badge/Python-3-3776AB?logo=python&logoColor=white)
+![DSP: minimum phase](https://img.shields.io/badge/DSP-minimum--phase-5C6B7A)
+![Room target](https://img.shields.io/badge/room%20target-adapted%20Harman--nearfield-C37D4B)
 
 [简体中文](README.zh-CN.md)
 
