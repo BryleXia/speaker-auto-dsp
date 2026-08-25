@@ -1,5 +1,9 @@
 # Speaker Auto DSP（音箱 EQ 校准工具）
 
+[![GitHub stars](https://img.shields.io/github/stars/BryleXia/speaker-auto-dsp)](https://github.com/BryleXia/speaker-auto-dsp/stargazers)
+[![License: MIT](https://img.shields.io/github/license/BryleXia/speaker-auto-dsp)](LICENSE)
+[![Python 3](https://img.shields.io/badge/Python-3-3776AB?logo=python&logoColor=white)]
+
 [English](README.md)
 
 一套把 [REW](https://www.roomeqwizard.com/) 频响测量数据转换成校正滤波器的脚本，
