@@ -116,7 +116,7 @@ python car_eq.py --car MyCar --slug mycar   # 自定义输出文件名前缀
 python car_eq.py --car MyCar --n 4          # 只使用前 4 个文件
 ```
 
-这里的目标是 Audiofrog 车内曲线，输出写在固定的 127 个整数频点上，以兼容 wavelet 型车机。
+这里的目标是 Audiofrog 官方车内曲线（随仓库附带 audiofrog_target_curve.csv，缺失时退回内置近似），输出写在固定的 127 个整数频点上，以兼容 wavelet 型车机。
 车型目录建议加入 `.gitignore`。
 
 ## 许可证

@@ -3,7 +3,17 @@ car_eq.py - Shared EQ generator for in-car measurement sets.
 
 This script treats the six measurements in a car folder as one shared 90°
 cabin response, energy-averages them, and computes a single GraphicEQ file
-using an Audiofrog-style target curve.
+using the official Audiofrog target curve (audiofrog_target_curve.csv at the
+project root; a built-in approximation is used when the file is absent).
+
+Correction pipeline: variable smoothing (1/6 oct below 2 kHz widening to
+1/4 oct above 8 kHz — after REW's variable-smoothing recommendation, gentler
+than REW's 1/3 endpoint because the input is already a 6-position spatial
+average), then target-minus-measured with the mid-band level offset removed,
+bass boosts tapered below 65 Hz, boost limited by the inter-position
+consistency ceiling and banned outright at/above 15 kHz (user directive:
+hearing protection; that roll-off belongs to the speakers, not the room),
+while cuts only respect the -18 dB floor.
 """
 
 from __future__ import annotations
@@ -16,9 +26,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from eq_common import (
+    consistency_boost_ceiling,
     energy_average,
     load_measurements,
     log_interp,
+    position_spread,
     require_files,
     save_fig as save_common_fig,
     setup_freq_axis,
@@ -235,20 +247,48 @@ def build_audiofrog_target(freq: np.ndarray, ref_level: float) -> np.ndarray:
     return ref_level + np.interp(freq, target_freq, target_db - target_1k)
 
 
-def make_shared_eq(freq: np.ndarray, raw_spl: np.ndarray, target: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def variable_smooth(freq: np.ndarray, spl: np.ndarray) -> np.ndarray:
+    """Frequency-dependent smoothing: 1/6 octave up to 2 kHz, widening to
+    1/4 octave by 8 kHz and staying there above.
+
+    Follows the reasoning behind REW's "variable smoothing" (recommended for
+    responses that are to be equalised): inter-position comb filtering grows
+    with frequency, so the correction must not chase ever-narrower HF detail.
+    The endpoint is 1/4 rather than REW's 1/3 because these measurements are
+    already a 6-position energy average — the spatial average has removed most
+    of the position-sensitive ripple, and the measured inter-position spread
+    above 9 kHz is only 1-2 dB, so the remaining dips are real system response
+    that 1/3-octave smoothing would start to erase.
+    """
+    sm_lo = smooth_oct(freq, spl, 1 / 6)
+    sm_hi = smooth_oct(freq, spl, 1 / 4)
+    blend = np.clip(np.log2(freq / 2000.0) / np.log2(8000.0 / 2000.0), 0.0, 1.0)
+    return sm_lo * (1.0 - blend) + sm_hi * blend
+
+
+def make_shared_eq(
+    freq: np.ndarray,
+    raw_spl: np.ndarray,
+    target: np.ndarray,
+    boost_ceiling: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Build a single shared GraphicEQ curve.
 
     Strategy:
-      - 1/6 octave smoothing on the energy-averaged cabin response.
+      - Variable smoothing (1/6 oct below 2 kHz widening to 1/4 oct above 8 kHz)
+        on the energy-averaged cabin response.
       - Remove broadband level offset in 200-8 kHz so the EQ focuses on shape.
       - Allow bass cuts freely, but taper only positive boosts below 65 Hz.
-      - From 15 kHz upward, never boost, only keep flat or attenuate.
-      - Clamp to a safe boost/cut window.
-      - Resample onto the exact GraphicEQ frequency grid used by the reference
-        grid file.
+      - Boost is limited by the inter-position consistency ceiling; cuts are
+        never limited beyond the -18 dB floor.
+      - Never boost at/above 15 kHz (user directive: hearing protection, and
+        the roll-off up there is most likely the speakers' own physical limit,
+        not something to correct).  Taper the correction to zero from 15 kHz
+        to 20 kHz, then resample onto the exact GraphicEQ frequency grid used
+        by the reference grid file.
     """
-    smoothed = smooth_oct(freq, raw_spl)
+    smoothed = variable_smooth(freq, raw_spl)
     correction = target - smoothed
 
     mid_mask = (freq >= 200) & (freq <= 8000)
@@ -269,7 +309,10 @@ def make_shared_eq(freq: np.ndarray, raw_spl: np.ndarray, target: np.ndarray) ->
         correction[taper_mask] *= taper
     correction[freq > 20000] = 0.0
 
-    correction = np.clip(correction, -18, 9)
+    if len(boost_ceiling) != len(freq):
+        raise ValueError("boost_ceiling must have the same length as freq.")
+    upper = np.minimum(9.0, boost_ceiling)
+    correction = np.clip(correction, -18, upper)
     eq_gain = np.interp(np.log10(GRAPHICEQ_FREQS), np.log10(freq), correction)
     return GRAPHICEQ_FREQS, eq_gain
 
@@ -297,16 +340,31 @@ def main() -> None:
     freq, spl_list = load_measurements(paths)
 
     raw_avg = energy_average(spl_list)
-    raw_sm = smooth_oct(freq, raw_avg)
+    raw_sm = variable_smooth(freq, raw_avg)
     ref_1k = float(raw_sm[np.argmin(np.abs(freq - 1000))])
     target = build_audiofrog_target(freq, ref_1k)
     plot_name = slug.upper()
 
     print(f"  Averaged {len(paths)} files")
     print(f"  1 kHz anchor: {ref_1k:.1f} dB")
-    print("  Target: Audiofrog-style target curve, normalized to the 1 kHz anchor")
+    print("  Target: Audiofrog official target curve, normalized to the 1 kHz anchor")
 
-    eq_freq, eq_gain = make_shared_eq(freq.copy(), raw_avg.copy(), target.copy())
+    # Boost is capped by what the six positions agree on: where the
+    # inter-position spread is small the deviation is common to every seat and
+    # safe to boost; where it is large the boost would overshoot the seats
+    # that don't share the dip.  (At/above 15 kHz boosting is banned outright
+    # inside make_shared_eq, per the user's hearing-protection directive.)
+    spread = position_spread(spl_list, freq)
+    ceiling = consistency_boost_ceiling(spread, cap=9.0, tolerance=1.0, slope=1.5)
+    eq_freq, eq_gain = make_shared_eq(freq.copy(), raw_avg.copy(), target.copy(), ceiling)
+
+    ceiling_on_grid = np.interp(np.log10(GRAPHICEQ_FREQS), np.log10(freq), ceiling)
+    ceiling_bites = int(np.sum((eq_gain > 0) & (eq_gain >= ceiling_on_grid - 0.05)))
+    print(
+        f"  Boost ceiling: spread median {np.median(spread):.1f} dB, "
+        f"ceiling range [{ceiling.min():.1f}, {ceiling.max():.1f}] dB, "
+        f"limiting at {ceiling_bites} of {len(GRAPHICEQ_FREQS)} bands"
+    )
 
     write_graphic_eq(OUTPUT_DIR / f"{slug}_shared_eq.txt", eq_freq, eq_gain)
 
@@ -319,7 +377,7 @@ def main() -> None:
     print(f"  Residual vs target (100 Hz-10 kHz): RMS={rms:.2f} dB, peak={peak:.1f} dB")
 
     fig, ax = plt.subplots(figsize=(11, 5))
-    ax.plot(freq, raw_sm, label="Raw measurement (avg + 1/6 smooth)", linewidth=1.4, alpha=0.65)
+    ax.plot(freq, raw_sm, label="Raw measurement (avg + variable smooth)", linewidth=1.4, alpha=0.65)
     ax.plot(freq, corrected, label="After EQ (predicted)", linewidth=2.0)
     ax.plot(freq, target, label="Target (Audiofrog)", linewidth=1.5, linestyle="--", color="red")
     ax.set_title(f"{plot_name} 90° L+R Shared EQ")

@@ -137,9 +137,11 @@ python car_eq.py --car MyCar --slug mycar   # custom output prefix
 python car_eq.py --car MyCar --n 4          # use only the first 4 files
 ```
 
-The target here is an Audiofrog in-car curve, and the output is written on a
-fixed grid of 127 integer frequencies for compatibility with wavelet-style head
-units. Vehicle directories are meant to be listed in `.gitignore`.
+The target is the official Audiofrog in-car curve (shipped as
+`audiofrog_target_curve.csv`, with a built-in approximation as fallback), and
+the output is written on a fixed grid of 127 integer frequencies for
+compatibility with wavelet-style head units. Vehicle directories are meant to
+be listed in `.gitignore`.
 
 ## License
 
