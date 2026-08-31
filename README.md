@@ -73,6 +73,11 @@ With APO bypassed, sweep each channel in REW at several microphone positions
 around the listening spot. Export each sweep as a `.txt` file into `原始数据/`,
 named `L …` for the left channel and `R …` for the right.
 
+REW's default export settings work unchanged — no smoothing required.
+Full-resolution default exports and legacy 96-ppo log exports are both
+accepted and may be mixed within one batch; exports carrying C-weighting
+compensation trigger a warning (with a direct mic this distorts the data).
+
 ### 2. Generate
 
 ```
