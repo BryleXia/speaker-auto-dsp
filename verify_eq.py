@@ -4,12 +4,14 @@ Verify EQ by comparing measured response, predicted response, and target.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 
 from eq_common import (
+    GRID_MATCH_ATOL,
     energy_average,
     harman_nearfield_target,
     load_measurements,
@@ -48,6 +50,27 @@ def _discover_orig_files(data_dir: Path) -> dict[str, list[Path]]:
     return result
 
 
+def load_meas_on_grid(path: Path, ref_freq: np.ndarray) -> np.ndarray:
+    """Parse an after-EQ export and resample its SPL onto the raw batch's
+    grid (log-domain interpolation).
+
+    The raw batch and the after-EQ re-measurement no longer need to share an
+    exact frequency grid: parse_rew canonicalises both, and any residual
+    native-vs-resampled anchor drift (or a different export resolution) is
+    bridged here, so a default REW export can be verified against a legacy
+    96-ppo batch.
+    """
+    meas_freq, spl = parse_rew(path)
+    if meas_freq[-1] < ref_freq[-1] or meas_freq[0] > ref_freq[0]:
+        warnings.warn(
+            f"{path.name}: with-EQ measurement spans {meas_freq[0]:.0f}-"
+            f"{meas_freq[-1]:.0f} Hz, short of the raw batch's {ref_freq[0]:.0f}-"
+            f"{ref_freq[-1]:.0f} Hz — values beyond it are edge-held",
+            UserWarning,
+        )
+    return log_interp(ref_freq, meas_freq, spl)
+
+
 def _discover_meas_files(meas_dir: Path) -> dict[str, Path]:
     result: dict[str, Path] = {}
     for ch, pat in [("L", "L *.txt"), ("R", "R *.txt")]:
@@ -67,7 +90,9 @@ def main() -> None:
         freq_ch, spls = load_measurements(paths)
         if freq is None:
             freq = freq_ch
-        elif len(freq_ch) != len(freq) or not np.allclose(freq_ch, freq, rtol=0, atol=1e-6):
+        elif len(freq_ch) != len(freq) or not np.allclose(
+            freq_ch, freq, rtol=0, atol=GRID_MATCH_ATOL
+        ):
             raise ValueError(f"Frequency grid mismatch in {ch} raw measurements.")
         orig_spl[ch] = energy_average(spls)
 
@@ -86,10 +111,7 @@ def main() -> None:
     meas_files = _discover_meas_files(MEAS_DIR)
     meas_spl: dict[str, np.ndarray] = {}
     for ch in ("L", "R"):
-        meas_freq, spl = parse_rew(meas_files[ch])
-        if len(meas_freq) != len(freq) or not np.allclose(meas_freq, freq, rtol=0, atol=1e-6):
-            raise ValueError(f"Frequency grid mismatch in {ch} with-EQ measurement.")
-        meas_spl[ch] = smooth_oct(meas_freq, spl)
+        meas_spl[ch] = smooth_oct(freq, load_meas_on_grid(meas_files[ch], freq))
 
     print("Loading GraphicEQ configs and computing prediction...")
     predicted: dict[str, np.ndarray] = {}

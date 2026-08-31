@@ -17,6 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from eq_common import (
+    GRID_MATCH_ATOL,
     compute_correction,
     consistency_boost_ceiling,
     design_minimum_phase_ir,
@@ -160,7 +161,9 @@ def main() -> None:
         freq_ch, spls = load_measurements(paths)
         if freq is None:
             freq = freq_ch
-        elif len(freq_ch) != len(freq) or not np.allclose(freq_ch, freq, rtol=0, atol=1e-6):
+        elif len(freq_ch) != len(freq) or not np.allclose(
+            freq_ch, freq, rtol=0, atol=GRID_MATCH_ATOL
+        ):
             raise ValueError(f"Frequency grid mismatch in {ch} measurements.")
         orig_avg[ch] = energy_average(spls)
         orig_spread[ch] = position_spread(spls, freq_ch)
