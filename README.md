@@ -73,10 +73,10 @@ With APO bypassed, sweep each channel in REW at several microphone positions
 around the listening spot. Export each sweep as a `.txt` file into `原始数据/`,
 named `L …` for the left channel and `R …` for the right.
 
-REW's default export settings work unchanged — no smoothing required.
-Full-resolution default exports and legacy 96-ppo log exports are both
-accepted and may be mixed within one batch; exports carrying C-weighting
-compensation trigger a warning (with a direct mic this distorts the data).
+The pipeline accepts exactly one export format — REW's defaults: raw
+resolution ("use native resolution"), no smoothing. Fractional-octave (ppo)
+exports are rejected outright: the per-octave resample is this pipeline's
+job, done once and deterministically, not delegated to the export dialog.
 
 ### 2. Generate
 

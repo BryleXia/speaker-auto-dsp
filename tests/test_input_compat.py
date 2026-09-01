@@ -1,17 +1,17 @@
-"""Input-format compatibility tests for the REW loading layer.
+"""Input-contract tests for the REW loading layer.
 
-The pipeline must accept, without any REW settings fiddling:
+The pipeline accepts exactly one input format — REW's default text export:
+raw (FFT-bin) resolution, no smoothing.  ``parse_rew`` canonicalises it onto
+a 96-ppo log grid anchored at the first bin >= 20 Hz and rejects everything
+else with a clear error:
 
-  1. The authoritative default REW export ("权威格式"): unsmoothed,
-     full-resolution linear FFT-bin grid starting at the first bin
-     (~0.37 Hz) up to the measurement's end frequency, 3 columns
-     (Freq/SPL/Phase), possibly GBK-mojibake header comments.
-  2. Legacy 96-ppo log exports (the May batch) — bit-for-bit unchanged.
+  * fractional-octave (ppo) exports — already downsampled by REW, and the
+    resample is this pipeline's job, done once and deterministically;
+  * grids too coarse or too sparse to support 1/6-octave smoothing;
+  * truncated exports and non-monotonic frequencies.
 
-Everything is canonicalised in ``parse_rew``: sub-audio bins dropped,
-log grids (>= 48 ppo) pass through untouched, anything else is resampled
-onto a 96-ppo log grid anchored at the first bin >= 20 Hz so that
-default-format and legacy-format files interoperate inside one batch.
+Every test runs on synthetic files written into a temp directory — no local
+measurement data is referenced, so the suite is meaningful on a fresh clone.
 
 Run:  py -3 -m unittest discover -s tests -v
 """
@@ -19,7 +19,6 @@ Run:  py -3 -m unittest discover -s tests -v
 import sys
 import tempfile
 import unittest
-import warnings
 from pathlib import Path
 
 import numpy as np
@@ -28,18 +27,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from eq_common import estimate_ppo, load_measurements, parse_rew  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent.parent
-AUTH_L = ROOT / "0831导出" / "权威格式" / "L 格式测试 Aug 31.txt"
-MAY_L = ROOT / "原始数据" / "L 90-1 May 29.txt"
-
 LINEAR_STEP = 0.3662109375  # 96000 / 262144, REW 256k FFT at 96 kHz
 BIN55 = 55 * LINEAR_STEP    # first bin >= 20 Hz in a default export
 
 
 def make_log_grid(ppo: int, f_max: float = 20000.0, anchor: float = BIN55) -> np.ndarray:
     # REW's ppo exports include the first grid point at or beyond f_max
-    # (the May file has 957 points ending at 20,037.85 Hz for a 20 kHz
-    # measurement), hence ceil, not floor.
+    # (hence ceil, not floor).
     n = int(np.ceil(np.log2(f_max / anchor) * ppo)) + 1
     return np.array([round(anchor * 2.0 ** (k / ppo), 6) for k in range(n)])
 
@@ -62,14 +56,12 @@ def make_coarse_octaves_grid(pts_per_oct: int = 8, f_max: float = 20480.0) -> np
     return np.array(freqs)
 
 
-def write_rew_file(path: Path, freqs, spls, *, c_weight: str = "Off",
-                   gbk_source: bool = False) -> Path:
+def write_rew_file(path: Path, freqs, spls, *, gbk_source: bool = False) -> Path:
     header = [
         "* Measurement data measured by REW V5.40 beta 134",
         "* Format: 256k Log Swept Sine, 1 sweep at -12.0 dBFS",
         "* Dated: 2026 Aug 31 12:00:00",
         "* REW Settings:",
-        f"*  C-weighting compensation: {c_weight}",
         "* Measurement: synthetic",
         "* Smoothing: None",
         "* Freq(Hz)\tSPL(dB)\tPhase(degrees)",
@@ -135,57 +127,29 @@ class TestDefaultLinearExport(TempCase):
         self.assertEqual(len(freq), len(spl))
         self.assertGreater(len(freq), 900)
 
-    @unittest.skipUnless(AUTH_L.exists(), "authoritative sample not present")
-    def test_authoritative_sample_matches_may_grid(self) -> None:
-        freq, _ = parse_rew(AUTH_L)
-        may_freq, _ = parse_rew(MAY_L)
-        n = min(len(freq), len(may_freq))
-        self.assertGreaterEqual(n, 900)
-        worst = np.max(np.abs(freq[:n] - may_freq[:n]))
-        self.assertLessEqual(worst, 1e-3,
-                             f"default-export grid drifted {worst:.2e} Hz from legacy grid")
 
-
-class TestLegacyLogExport(TempCase):
-    @unittest.skipUnless(MAY_L.exists(), "May sample not present")
-    def test_may_file_passes_through_bit_identical(self) -> None:
-        freq, spl = parse_rew(MAY_L)
-        raw_freq, raw_spl = [], []
-        for line in MAY_L.read_text(encoding="utf-8", errors="replace").splitlines():
-            parts = line.split()
-            if len(parts) < 2:
-                continue
-            try:
-                f, s = float(parts[0]), float(parts[1])
-            except ValueError:
-                continue
-            raw_freq.append(f)
-            raw_spl.append(s)
-        self.assertEqual(freq.tolist(), raw_freq)
-        self.assertEqual(spl.tolist(), raw_spl)
-
-    def test_synthetic_96ppo_passes_through(self) -> None:
+class TestFractionalOctaveExportsRejected(TempCase):
+    def test_96ppo_export_is_rejected(self) -> None:
         freqs = make_log_grid(96)
         path = write_rew_file(self.dir / "log96.txt", freqs, spl_curve(freqs))
-        freq, spl = parse_rew(path)
-        self.assertEqual(freq.tolist(), freqs.tolist())
-        # Expected SPLs must go through the same ":.3f" formatting the file
-        # writer used, so the comparison is an exact round-trip.
-        expected = [float(f"{s:.3f}") for s in spl_curve(freqs)]
-        self.assertEqual(spl.tolist(), expected)
-
-    def test_48ppo_is_accepted(self) -> None:
-        freqs = make_log_grid(48)
-        path = write_rew_file(self.dir / "log48.txt", freqs, spl_curve(freqs))
-        freq, _ = parse_rew(path)
-        self.assertEqual(freq.tolist(), freqs.tolist())
-
-    def test_coarse_24ppo_is_rejected(self) -> None:
-        freqs = make_log_grid(24)
-        path = write_rew_file(self.dir / "log24.txt", freqs, spl_curve(freqs))
         with self.assertRaises(ValueError) as ctx:
             parse_rew(path)
-        self.assertIn("ppo", str(ctx.exception))
+        self.assertIn("fractional-octave", str(ctx.exception))
+
+    def test_48ppo_export_is_rejected(self) -> None:
+        freqs = make_log_grid(48)
+        path = write_rew_file(self.dir / "log48.txt", freqs, spl_curve(freqs))
+        with self.assertRaises(ValueError) as ctx:
+            parse_rew(path)
+        self.assertIn("48 ppo", str(ctx.exception))
+
+    def test_error_message_points_at_the_required_format(self) -> None:
+        freqs = make_log_grid(96)
+        path = write_rew_file(self.dir / "log96.txt", freqs, spl_curve(freqs))
+        with self.assertRaises(ValueError) as ctx:
+            parse_rew(path)
+        self.assertIn("raw resolution", str(ctx.exception))
+        self.assertIn("no smoothing", str(ctx.exception))
 
 
 class TestRejections(TempCase):
@@ -229,65 +193,38 @@ class TestRejections(TempCase):
             parse_rew(path)
 
 
-class TestHeaderWarnings(TempCase):
-    def test_c_weighting_on_warns(self) -> None:
-        freqs = make_linear_grid()
-        path = write_rew_file(self.dir / "cwon.txt", freqs, spl_curve(freqs),
-                              c_weight="On")
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            parse_rew(path)
-        self.assertTrue(any("C-weighting" in str(w.message) for w in caught))
-
-    def test_c_weighting_off_is_silent(self) -> None:
-        freqs = make_linear_grid()
-        path = write_rew_file(self.dir / "cwoff.txt", freqs, spl_curve(freqs),
-                              c_weight="Off")
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            parse_rew(path)
-        self.assertFalse(any("C-weighting" in str(w.message) for w in caught))
-
-
 class TestBatchInterop(TempCase):
-    def test_default_and_legacy_files_mix_in_one_batch(self) -> None:
-        legacy = write_rew_file(self.dir / "legacy.txt",
-                                make_log_grid(96), spl_curve(make_log_grid(96)))
-        lin_freqs = make_linear_grid()
-        default = write_rew_file(self.dir / "default.txt", lin_freqs,
-                                 spl_curve(lin_freqs))
-        freq, spls = load_measurements([legacy, default])
+    def test_two_default_files_mix_in_one_batch(self) -> None:
+        freqs = make_linear_grid()
+        a = write_rew_file(self.dir / "a.txt", freqs, spl_curve(freqs))
+        b = write_rew_file(self.dir / "b.txt", freqs, spl_curve(freqs) + 1.0)
+        freq, spls = load_measurements([a, b])
         self.assertEqual(len(spls), 2)
-        self.assertEqual(len(freq), len(make_log_grid(96)))
+        self.assertAlmostEqual(estimate_ppo(freq), 96.0, places=1)
 
-    def test_genuinely_different_grids_still_rejected(self) -> None:
-        f96 = write_rew_file(self.dir / "g96.txt", make_log_grid(96),
-                             spl_curve(make_log_grid(96)))
-        f48 = write_rew_file(self.dir / "g48.txt", make_log_grid(48),
-                             spl_curve(make_log_grid(48)))
+    def test_different_fft_sizes_sharing_an_anchor_mix(self) -> None:
+        # Double bin density (half the step): the first bin >= 20 Hz is then
+        # bin 110 = 55 * (step/2), so the anchor reconstruction lands on the
+        # same absolute frequency and the canonical grid is identical.
+        fine = make_linear_grid(n_bins=2 * 54613, step=LINEAR_STEP / 2)
+        normal = make_linear_grid()
+        a = write_rew_file(self.dir / "fine.txt", fine, spl_curve(fine))
+        b = write_rew_file(self.dir / "normal.txt", normal, spl_curve(normal))
+        freq, spls = load_measurements([a, b])
+        self.assertEqual(len(spls), 2)
+        self.assertAlmostEqual(freq[0], BIN55, places=6)
+
+    def test_different_anchors_are_rejected(self) -> None:
+        # A >half-step shift pushes the anchor to the next bin over: same
+        # length, different grid — a loose tolerance would silently average
+        # two different grids.
+        shifted = make_linear_grid() + 0.19
+        a = write_rew_file(self.dir / "a.txt", make_linear_grid(),
+                           spl_curve(make_linear_grid()))
+        b = write_rew_file(self.dir / "b.txt", shifted, spl_curve(shifted))
         with self.assertRaises(ValueError) as ctx:
-            load_measurements([f96, f48])
+            load_measurements([a, b])
         self.assertIn("grid", str(ctx.exception).lower())
-
-    @unittest.skipUnless(AUTH_L.exists() and MAY_L.exists(), "samples not present")
-    def test_real_default_and_may_files_mix_in_one_batch(self) -> None:
-        # The synthetic test cannot exercise the relaxed tolerance: its
-        # anchor is an exact dyadic float.  The real pair's measured drift
-        # is 5.9e-7 Hz — the old 1e-6 tolerance passed it with only 1.7x
-        # margin, which any change in file rounding could break.
-        freq, spls = load_measurements([MAY_L, AUTH_L])
-        self.assertEqual(len(spls), 2)
-        self.assertEqual(len(freq), 957)
-
-    def test_same_length_different_anchor_is_rejected(self) -> None:
-        # Both 957 points, but anchors 0.09 Hz apart — a tolerance looser
-        # than 1e-3 would silently average two different grids.
-        g1 = write_rew_file(self.dir / "a.txt", make_log_grid(96, anchor=BIN55),
-                            spl_curve(make_log_grid(96)))
-        g2 = write_rew_file(self.dir / "b.txt", make_log_grid(96, anchor=20.05),
-                            spl_curve(make_log_grid(96, anchor=20.05)))
-        with self.assertRaises(ValueError):
-            load_measurements([g1, g2])
 
 
 if __name__ == "__main__":

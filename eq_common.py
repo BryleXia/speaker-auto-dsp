@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import struct
-import warnings
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -11,18 +10,16 @@ import numpy as np
 
 FREQ_TICKS = [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
 
-# --- Input canonicalisation -------------------------------------------------
-# REW's default "Export measurement as text" produces an unsmoothed,
-# full-resolution linear FFT-bin grid starting at the first bin (~0.37 Hz).
-# The pipeline normalises every export onto the legacy 96-ppo log grid so
-# both formats interoperate inside one batch:
-#   * log-uniform grids at >= 48 ppo pass through untouched;
-#   * anything else (the default linear export, irregular grids) is
-#     resampled onto a 96-ppo log grid anchored at the first data point
-#     at or above 20 Hz — the same bin REW's own ppo export anchors to.
+# --- Input contract ----------------------------------------------------------
+# The pipeline accepts exactly one input format: REW's default text export —
+# unsmoothed, full-resolution linear FFT-bin grid starting at the first bin
+# (~0.37 Hz).  Fractional-octave (ppo) exports are rejected: raw resolution
+# is the measurement's ground truth, and the per-octave resample below is
+# this pipeline's job, done once, deterministically, onto a 96-ppo log grid
+# anchored at the first data point at or above 20 Hz — the same bin REW's
+# own ppo export anchors to.
 MIN_HZ = 20.0            # sub-audio bins in default exports are noise
-CANON_PPO = 96           # matches the legacy export grid
-MIN_LOG_PPO = 48         # coarsest log grid the 1/6-oct smoother can work with
+CANON_PPO = 96           # canonical grid: 96 points per octave
 MIN_SPAN_HZ = 5000.0     # guards against non-frequency-response exports
 MIN_PTS_PER_OCT = 8      # guards against too-coarse source grids
 GRID_MATCH_ATOL = 1e-3   # anchor-reconstruction drift, physically meaningless
@@ -43,15 +40,17 @@ def require_files(paths: list[Path]) -> None:
 
 
 def _canonicalize(freq: np.ndarray, spl: np.ndarray, path: Path) -> tuple[np.ndarray, np.ndarray]:
-    """Normalise a parsed REW grid (see the constants block for the policy).
+    """Normalise a parsed REW grid (see the constants block for the contract).
 
-    Log-uniform grids at >= 48 ppo pass through untouched, so legacy exports
-    load bit-identically.  Everything else is resampled in log-frequency onto
-    a 96-ppo grid whose anchor is the first data point at or above 20 Hz
-    quantised to the source grid's step — REW anchors its own ppo exports to
-    the same FFT bin, so resampled and native grids land on the same points.
-    The ceil rule for the grid end reproduces REW's behaviour of including
-    the first ppo point at or beyond the data's end.
+    Only raw-resolution (linear FFT-bin) exports are accepted.  Fractional-
+    octave exports are rejected outright — they are already-downsampled data,
+    and the resample onto the 96-ppo grid is this pipeline's job, not REW's.
+    The 96-ppo target grid is anchored at the first data point at or above
+    20 Hz quantised to the source grid's step — REW anchors its own ppo
+    exports to the same FFT bin, so the resampled grid lands on the same
+    points REW's native 96-ppo export used.  The ceil rule for the grid end
+    reproduces REW's behaviour of including the first ppo point at or beyond
+    the data's end.
     """
     keep = freq >= MIN_HZ
     freq, spl = freq[keep], spl[keep]
@@ -70,12 +69,12 @@ def _canonicalize(freq: np.ndarray, spl: np.ndarray, path: Path) -> tuple[np.nda
     spread = float(np.max(np.abs(log_diffs - med))) / med
     if spread < 1e-4:
         ppo = 1.0 / med
-        if round(ppo) < MIN_LOG_PPO:
-            raise ValueError(
-                f"{path.name}: log grid at {ppo:.0f} ppo is too coarse for "
-                f"1/6-octave smoothing — re-export at {CANON_PPO} ppo"
-            )
-        return freq, spl
+        raise ValueError(
+            f"{path.name}: this is a fractional-octave export ({ppo:.0f} ppo). "
+            f"The pipeline only accepts REW's default export — raw resolution, "
+            f"no smoothing (see README). Re-export with 'use native "
+            f"resolution' and smoothing set to None."
+        )
 
     # Irregular/linear source grid: check it is dense enough to resample.
     # The last edge reaches freq[-1] so the partial top octave is covered too.
@@ -121,19 +120,14 @@ def parse_rew(path: Path) -> tuple[np.ndarray, np.ndarray]:
     column-title line, and blank lines are skipped automatically.
 
     The result is canonicalised (see :func:`_canonicalize`): sub-audio bins
-    are dropped and non-log grids are resampled onto the 96-ppo grid, so the
-    default REW export needs no settings changes to be usable.  A header
-    claiming ``C-weighting compensation: On`` triggers a warning — with a
-    direct mic that setting bakes an inverse-C curve into the data.
+    are dropped and the raw-resolution grid is resampled onto 96 ppo.  Only
+    default exports (raw resolution, no smoothing) are accepted.
     """
     require_file(path)
     freqs: list[float] = []
     spls: list[float] = []
-    c_weight_on = False
     with path.open(encoding="utf-8", errors="replace") as fp:
         for line in fp:
-            if "C-weighting compensation: On" in line:
-                c_weight_on = True
             parts = line.split()
             if len(parts) < 2:
                 continue
@@ -154,15 +148,6 @@ def parse_rew(path: Path) -> tuple[np.ndarray, np.ndarray]:
         raise ValueError(f"REW file contains non-finite values: {path}")
     if np.any(freq <= 0):
         raise ValueError(f"REW file contains non-positive frequencies: {path}")
-
-    if c_weight_on:
-        warnings.warn(
-            f"{path.name}: exported with REW 'C-weighting compensation' ON. "
-            f"With a direct microphone this bakes an inverse-C curve into "
-            f"the data (several dB of bass lift) — re-measure with it OFF "
-            f"(REW Preferences → Mic/Meter).",
-            UserWarning,
-        )
 
     return _canonicalize(freq, spl, path)
 
