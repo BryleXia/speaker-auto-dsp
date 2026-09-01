@@ -3,9 +3,7 @@ CLAUDE.md
 __pycache__/
 *.pyc
 .DS_Store
-output/*.png
-output/*.txt
-output/*.wav
+output/
 
 # 测量数据（含个人信息，不入库）
 原始数据/
