@@ -16,15 +16,9 @@ hearing protection; that roll-off belongs to the speakers, not the room),
 while cuts only respect the -18 dB floor.
 
 The target carries a user-preference bass trim (2026-09-01): a -5 dB
-low-shelf at 75 Hz is applied to the official curve.  The shipped shelf is
-voiced for bass-heavy taste (Wehmeyer: Harman +2 dB @ 20 Hz) and its
-transition extends to ~316 Hz; the trim halves the shelf (20 Hz +9.65 ->
-+4.74 dB rel 1 kHz, the Harman "less bass" listener segment) and tightens
-the transition toward Wehmeyer's own 60-160 Hz guidance while keeping the
-whole bass rise above the midrange (no dip — user constraint).  The
-midrange/treble shape is left untouched: it matches the Harman in-car
-consensus, and the roll-off up there is what keeps the direct sound right
-when the RTA measures direct + reflected energy.
+low-shelf at 75 Hz on the official curve — halves its bass-heavy shelf while
+keeping the whole rise above the midrange (no dip).  Midrange/treble shape
+untouched (Harman in-car consensus).
 """
 
 from __future__ import annotations
@@ -55,13 +49,9 @@ BASE = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE / "output"
 TARGET_CSV = BASE / "audiofrog_target_curve.csv"
 
-# Bass preference trim on the target curve (2026-09-01 user decision).
-# The corner sits at 75 Hz, well below AutoEq's usual ~105 Hz, because the
-# Audiofrog transition is unusually wide (still +2 dB @ 125 Hz): a higher
-# corner digs 125-315 Hz below the midrange — the "hole in the bass" the
-# user explicitly ruled out.  Numeric check with the real shelf_db response:
-# trimmed target >= +0.56 dB rel 1 kHz everywhere in 20-400 Hz, monotonic,
-# and <= 0.02 dB above 500 Hz.  Safe tuning range for --bass-trim-fc: 55-85.
+# Bass preference trim on the target curve (2026-09-01 user decision):
+# fc must stay low (safe range 55-85 Hz) or the shelf tail digs 125-315 Hz
+# below the midrange — the "hole in the bass" the user ruled out.
 BASS_TRIM_DB = -5.0
 BASS_TRIM_FC_HZ = 75.0
 BASS_TRIM_Q = 0.65
@@ -281,14 +271,11 @@ def apply_bass_trim(
     trim_db: float | None = None,
     trim_fc: float | None = None,
 ) -> np.ndarray:
-    """Apply the user-preference bass trim to a 1 kHz-normalised target.
+    """User-preference bass trim: a negative low-shelf on the target.
 
-    Standard way to express bass preference (AutoEq applies preference as
-    low/high-shelf IIR filters on the target): a negative low-shelf pulls the
-    whole bass rise down while keeping it above the midrange.  ``trim_db`` is
-    the signed shelf gain (negative = down); ``trim_fc`` must stay low enough
-    that the shelf tail never eats the official curve's 125-315 Hz rise into
-    negative territory (see BASS_TRIM_FC_HZ comment).
+    ``trim_db`` is the signed shelf gain (negative = down); ``trim_fc`` must
+    stay low enough not to dig 125-315 Hz below the midrange (see
+    BASS_TRIM_FC_HZ comment).
     """
     if trim_db is None:
         trim_db = BASS_TRIM_DB
