@@ -118,9 +118,11 @@ MyCar/
 python car_eq.py --car MyCar                # → output/MyCar_shared_eq.txt
 python car_eq.py --car MyCar --slug mycar   # 自定义输出文件名前缀
 python car_eq.py --car MyCar --n 4          # 只使用前 4 个文件
+python car_eq.py --car MyCar --bass-trim 0  # 关闭低频偏好修剪（默认 -5 dB @ 75 Hz）
 ```
 
 这里的目标是 Audiofrog 官方车内曲线（随仓库附带 audiofrog_target_curve.csv，缺失时退回内置近似），输出写在固定的 127 个整数频点上，以兼容 wavelet 型车机。
+目标曲线在官方形态上叠加了一层个人偏好修剪：低频 −5 dB 搁架（75 Hz 拐点）。官方 shelf 按「低频爱好者」口味调校（比 Harman 目标多 2 dB @ 20 Hz）、过渡带延伸到 ~316 Hz；修剪后 20 Hz 为 +4.7 dB（相对 1 kHz，约 Harman「少低频人群」的水平），低频仍整体高于中频、不挖坑，中高频维持官方形态（即 Harman 车载共识）。`--bass-trim` / `--bass-trim-fc` 可调。
 车型目录建议加入 `.gitignore`。
 
 ## 许可证

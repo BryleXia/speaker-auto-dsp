@@ -14,6 +14,17 @@ bass boosts tapered below 65 Hz, boost limited by the inter-position
 consistency ceiling and banned outright at/above 15 kHz (user directive:
 hearing protection; that roll-off belongs to the speakers, not the room),
 while cuts only respect the -18 dB floor.
+
+The target carries a user-preference bass trim (2026-09-01): a -5 dB
+low-shelf at 75 Hz is applied to the official curve.  The shipped shelf is
+voiced for bass-heavy taste (Wehmeyer: Harman +2 dB @ 20 Hz) and its
+transition extends to ~316 Hz; the trim halves the shelf (20 Hz +9.65 ->
++4.74 dB rel 1 kHz, the Harman "less bass" listener segment) and tightens
+the transition toward Wehmeyer's own 60-160 Hz guidance while keeping the
+whole bass rise above the midrange (no dip — user constraint).  The
+midrange/treble shape is left untouched: it matches the Harman in-car
+consensus, and the roll-off up there is what keeps the direct sound right
+when the RTA measures direct + reflected energy.
 """
 
 from __future__ import annotations
@@ -43,6 +54,17 @@ from eq_common import (
 BASE = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE / "output"
 TARGET_CSV = BASE / "audiofrog_target_curve.csv"
+
+# Bass preference trim on the target curve (2026-09-01 user decision).
+# The corner sits at 75 Hz, well below AutoEq's usual ~105 Hz, because the
+# Audiofrog transition is unusually wide (still +2 dB @ 125 Hz): a higher
+# corner digs 125-315 Hz below the midrange — the "hole in the bass" the
+# user explicitly ruled out.  Numeric check with the real shelf_db response:
+# trimmed target >= +0.56 dB rel 1 kHz everywhere in 20-400 Hz, monotonic,
+# and <= 0.02 dB above 500 Hz.  Safe tuning range for --bass-trim-fc: 55-85.
+BASS_TRIM_DB = -5.0
+BASS_TRIM_FC_HZ = 75.0
+BASS_TRIM_Q = 0.65
 
 # Match the reference GraphicEQ frequency grid (graphic_eq_grid_ref.txt, local only).
 GRAPHICEQ_FREQS = np.array(
@@ -179,12 +201,24 @@ GRAPHICEQ_FREQS = np.array(
 )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a shared car EQ from L+R measurements.")
     parser.add_argument("--car", required=True, help="Car folder name under the project root (e.g. MyCar).")
     parser.add_argument("--slug", default=None, help="Output filename prefix (default: same as --car).")
     parser.add_argument("--n", type=int, default=6, help="Max number of measurement files to use (default: 6).")
-    return parser.parse_args()
+    parser.add_argument(
+        "--bass-trim",
+        type=float,
+        default=-BASS_TRIM_DB,
+        help="Bass shelf trim on the target curve, in dB down (default: %(default)g; 0 disables).",
+    )
+    parser.add_argument(
+        "--bass-trim-fc",
+        type=float,
+        default=BASS_TRIM_FC_HZ,
+        help="Corner frequency of the bass trim shelf, Hz (default: %(default)g; safe range 55-85).",
+    )
+    return parser.parse_args(argv)
 
 
 def build_measurement_files(data_dir: Path, car_name: str, n: int = 6) -> list[Path]:
@@ -241,10 +275,40 @@ def load_audiofrog_target_csv() -> tuple[np.ndarray, np.ndarray]:
     return _build_audiofrog_fallback()
 
 
-def build_audiofrog_target(freq: np.ndarray, ref_level: float) -> np.ndarray:
+def apply_bass_trim(
+    freq: np.ndarray,
+    target_db: np.ndarray,
+    trim_db: float | None = None,
+    trim_fc: float | None = None,
+) -> np.ndarray:
+    """Apply the user-preference bass trim to a 1 kHz-normalised target.
+
+    Standard way to express bass preference (AutoEq applies preference as
+    low/high-shelf IIR filters on the target): a negative low-shelf pulls the
+    whole bass rise down while keeping it above the midrange.  ``trim_db`` is
+    the signed shelf gain (negative = down); ``trim_fc`` must stay low enough
+    that the shelf tail never eats the official curve's 125-315 Hz rise into
+    negative territory (see BASS_TRIM_FC_HZ comment).
+    """
+    if trim_db is None:
+        trim_db = BASS_TRIM_DB
+    if trim_fc is None:
+        trim_fc = BASS_TRIM_FC_HZ
+    if trim_db == 0:
+        return target_db
+    return target_db + shelf_db(freq, fc=trim_fc, gain_db=trim_db, q=BASS_TRIM_Q)
+
+
+def build_audiofrog_target(
+    freq: np.ndarray,
+    ref_level: float,
+    trim_db: float | None = None,
+    trim_fc: float | None = None,
+) -> np.ndarray:
     target_freq, target_db = load_audiofrog_target_csv()
     target_1k = float(np.interp(1000.0, target_freq, target_db))
-    return ref_level + np.interp(freq, target_freq, target_db - target_1k)
+    rel = np.interp(freq, target_freq, target_db) - target_1k
+    return ref_level + apply_bass_trim(freq, rel, trim_db=trim_db, trim_fc=trim_fc)
 
 
 def variable_smooth(freq: np.ndarray, spl: np.ndarray) -> np.ndarray:
@@ -342,12 +406,15 @@ def main() -> None:
     raw_avg = energy_average(spl_list)
     raw_sm = variable_smooth(freq, raw_avg)
     ref_1k = float(raw_sm[np.argmin(np.abs(freq - 1000))])
-    target = build_audiofrog_target(freq, ref_1k)
+    trim_db = -args.bass_trim
+    target = build_audiofrog_target(freq, ref_1k, trim_db=trim_db, trim_fc=args.bass_trim_fc)
     plot_name = slug.upper()
 
     print(f"  Averaged {len(paths)} files")
     print(f"  1 kHz anchor: {ref_1k:.1f} dB")
     print("  Target: Audiofrog official target curve, normalized to the 1 kHz anchor")
+    if args.bass_trim:
+        print(f"  Bass trim: -{args.bass_trim:g} dB shelf @ {args.bass_trim_fc:g} Hz (user preference layer)")
 
     # Boost is capped by what the six positions agree on: where the
     # inter-position spread is small the deviation is common to every seat and
@@ -379,7 +446,10 @@ def main() -> None:
     fig, ax = plt.subplots(figsize=(11, 5))
     ax.plot(freq, raw_sm, label="Raw measurement (avg + variable smooth)", linewidth=1.4, alpha=0.65)
     ax.plot(freq, corrected, label="After EQ (predicted)", linewidth=2.0)
-    ax.plot(freq, target, label="Target (Audiofrog)", linewidth=1.5, linestyle="--", color="red")
+    target_label = "Target (Audiofrog)"
+    if args.bass_trim:
+        target_label = f"Target (Audiofrog, bass -{args.bass_trim:g} dB @ {args.bass_trim_fc:g} Hz)"
+    ax.plot(freq, target, label=target_label, linewidth=1.5, linestyle="--", color="red")
     ax.set_title(f"{plot_name} 90° L+R Shared EQ")
     setup_freq_axis(ax)
     save_fig(fig, f"{slug}_before_after.png")

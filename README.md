@@ -140,12 +140,19 @@ MyCar/
 python car_eq.py --car MyCar                # → output/MyCar_shared_eq.txt
 python car_eq.py --car MyCar --slug mycar   # custom output prefix
 python car_eq.py --car MyCar --n 4          # use only the first 4 files
+python car_eq.py --car MyCar --bass-trim 0  # disable the bass trim (default -5 dB @ 75 Hz)
 ```
 
 The target is the official Audiofrog in-car curve (shipped as
 `audiofrog_target_curve.csv`, with a built-in approximation as fallback), and
 the output is written on a fixed grid of 127 integer frequencies for
-compatibility with wavelet-style head units. Vehicle directories are meant to
+compatibility with wavelet-style head units. A personal-preference bass trim
+is applied on top: a −5 dB shelf at 75 Hz. The official shelf is voiced for
+bass-heavy taste (Harman +2 dB @ 20 Hz) with a transition stretching to
+~316 Hz; the trim brings 20 Hz down to +4.7 dB (rel 1 kHz, roughly the Harman
+"less bass" listener segment) while keeping the whole bass rise above the
+midrange — no dip — and leaving the midrange/treble shape untouched.
+`--bass-trim` / `--bass-trim-fc` tune it. Vehicle directories are meant to
 be listed in `.gitignore`.
 
 ## License
