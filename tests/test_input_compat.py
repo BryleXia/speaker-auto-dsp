@@ -249,42 +249,6 @@ class TestHeaderWarnings(TempCase):
         self.assertFalse(any("C-weighting" in str(w.message) for w in caught))
 
 
-class TestVerifyEqResampling(TempCase):
-    def test_after_eq_file_on_foreign_grid_loads_onto_reference_grid(self) -> None:
-        from verify_eq import load_meas_on_grid
-
-        ref = make_log_grid(96)
-        foreign = make_log_grid(48)  # same span, different resolution
-        spls = 75.0 + 6.0 * np.log2(foreign / 20.0)  # linear in log-f
-        path = write_rew_file(self.dir / "after.txt", foreign, spls)
-        spl = load_meas_on_grid(path, ref)
-        self.assertEqual(len(spl), len(ref))
-        expected = 75.0 + 6.0 * np.log2(ref / 20.0)
-        np.testing.assert_allclose(spl, expected, atol=5e-4)
-
-    def test_short_meas_span_warns_about_edge_holding(self) -> None:
-        from verify_eq import load_meas_on_grid
-
-        ref = make_log_grid(96)
-        short = make_log_grid(96, f_max=10000.0)
-        path = write_rew_file(self.dir / "short.txt", short, spl_curve(short))
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            load_meas_on_grid(path, ref)
-        self.assertTrue(any("edge-held" in str(w.message) for w in caught))
-
-    def test_full_meas_span_is_silent(self) -> None:
-        from verify_eq import load_meas_on_grid
-
-        ref = make_log_grid(96)
-        same = make_log_grid(96)
-        path = write_rew_file(self.dir / "full.txt", same, spl_curve(same))
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            load_meas_on_grid(path, ref)
-        self.assertFalse(any("edge-held" in str(w.message) for w in caught))
-
-
 class TestBatchInterop(TempCase):
     def test_default_and_legacy_files_mix_in_one_batch(self) -> None:
         legacy = write_rew_file(self.dir / "legacy.txt",

@@ -49,8 +49,8 @@ research, while the parameters were set for the nearfield desktop monitors this
 tool was built around. If you are correcting a different kind of speaker in a
 different kind of room — bookshelf speakers at a greater distance, floorstanders,
 home theatre — substitute a target suited to that application. The curve lives
-in a single function, `harman_nearfield_target` in `eq_common.py`, shared by
-`eq_make.py` and `verify_eq.py` — swap it there. The bass boost ceilings in
+in a single function, `harman_nearfield_target` in `eq_common.py`, used by
+`eq_make.py` — swap it there. The bass boost ceilings in
 `eq_make.py` likewise encode the limits of a small 3.5-inch woofer, not a
 general rule.
 
@@ -111,18 +111,6 @@ No `Preamp:` line is written. Overall gain and headroom are left to the user; th
 script prints the largest boost it applied so an appropriate attenuation can be
 chosen.
 
-### 4. Verify
-
-Re-measure with APO enabled, export into `挂载eq后测出来的数据/` using the same
-naming convention, then:
-
-```
-python verify_eq.py
-```
-
-This plots the measured post-EQ response against the prediction and the target,
-which is the only way to confirm that the filter did what it was designed to do.
-
 ## Car EQ
 
 Car head units apply one shared curve rather than separate left and right
@@ -147,13 +135,9 @@ The target is the official Audiofrog in-car curve (shipped as
 `audiofrog_target_curve.csv`, with a built-in approximation as fallback), and
 the output is written on a fixed grid of 127 integer frequencies for
 compatibility with wavelet-style head units. A personal-preference bass trim
-is applied on top: a −5 dB shelf at 75 Hz. The official shelf is voiced for
-bass-heavy taste (Harman +2 dB @ 20 Hz) with a transition stretching to
-~316 Hz; the trim brings 20 Hz down to +4.7 dB (rel 1 kHz, roughly the Harman
-"less bass" listener segment) while keeping the whole bass rise above the
-midrange — no dip — and leaving the midrange/treble shape untouched.
-`--bass-trim` / `--bass-trim-fc` tune it. Vehicle directories are meant to
-be listed in `.gitignore`.
+(a −5 dB shelf at 75 Hz) is applied on top; `--bass-trim` / `--bass-trim-fc`
+tune it, `--bass-trim 0` disables. Vehicle directories are meant to be listed
+in `.gitignore`.
 
 ## License
 
